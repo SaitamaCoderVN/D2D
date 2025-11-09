@@ -1,24 +1,27 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
+import { ConfigModule as NestConfigModule } from '@nestjs/config';
+import { ConfigModule } from './config/config.module';
 import { DeploymentModule } from './deployment/deployment.module';
 import { WalletModule } from './wallet/wallet.module';
+import { ProgramModule } from './program/program.module';
+import { TransactionModule } from './transaction/transaction.module';
+import { CryptoModule } from './crypto/crypto.module';
+import { SupabaseModule } from './supabase/supabase.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
+    NestConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
     }),
-    MongooseModule.forRootAsync({
-      useFactory: () => ({
-        uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/d2d',
-      }),
-    }),
+    // Removed MongooseModule - using Supabase instead
+    ConfigModule,
+    SupabaseModule,
     DeploymentModule,
     WalletModule,
+    ProgramModule,
+    TransactionModule,
+    CryptoModule,
   ],
 })
 export class AppModule {}
-
-

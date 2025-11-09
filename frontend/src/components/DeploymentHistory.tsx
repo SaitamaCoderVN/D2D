@@ -33,9 +33,10 @@ export default function DeploymentHistory({
 
     if (!hasActiveDeployment) return;
 
+    // Poll every 3 seconds for active deployments
     const interval = setInterval(() => {
       fetchDeployments();
-    }, 2000);
+    }, 3000);
 
     return () => clearInterval(interval);
   }, [deployments, userWalletAddress]);
@@ -195,7 +196,7 @@ export default function DeploymentHistory({
                         {statusConfig.label}
                       </span>
                       <span className="text-sm text-gray-500">
-                        {formatDate(deployment.createdAt)}
+                        {formatDate(deployment.createdAt || deployment.created_at || new Date().toISOString())}
                       </span>
                     </div>
                     
@@ -203,20 +204,20 @@ export default function DeploymentHistory({
                       <div className="flex items-center space-x-2">
                         <span className="text-sm font-medium text-gray-700">Devnet:</span>
                         <code className="text-sm bg-gray-100 px-3 py-1.5 rounded font-mono text-gray-900">
-                          {truncateAddress(deployment.devnetProgramId, 8)}
+                          {truncateAddress(deployment.devnetProgramId || deployment.devnet_program_id || '', 8)}
                         </code>
                       </div>
                       
-                      {deployment.mainnetProgramId && (
+                      {(deployment.mainnetProgramId || deployment.mainnet_program_id) && (
                         <div className="flex items-center space-x-2">
                           <span className="text-sm font-medium text-gray-700">Mainnet:</span>
                           <a
-                            href={`https://explorer.solana.com/address/${deployment.mainnetProgramId}?cluster=devnet`}
+                            href={`https://explorer.solana.com/address/${deployment.mainnetProgramId || deployment.mainnet_program_id}?cluster=mainnet`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-sm text-[#0066FF] hover:text-[#0052CC] underline font-mono flex items-center space-x-1"
                           >
-                            <span>{truncateAddress(deployment.mainnetProgramId, 8)}</span>
+                            <span>{truncateAddress(deployment.mainnetProgramId || deployment.mainnet_program_id || '', 8)}</span>
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                             </svg>
@@ -227,7 +228,7 @@ export default function DeploymentHistory({
                       <div className="flex items-center space-x-2">
                         <span className="text-sm font-medium text-gray-700">Deployer:</span>
                         <code className="text-sm bg-gray-100 px-3 py-1.5 rounded font-mono text-gray-900">
-                          {truncateAddress(deployment.deployerWalletAddress, 8)}
+                          {truncateAddress(deployment.deployerWalletAddress || deployment.deployer_wallet_address || '', 8)}
                         </code>
                       </div>
                     </div>
@@ -294,19 +295,19 @@ export default function DeploymentHistory({
                   )}
                 </div>
 
-                {deployment.errorMessage && (
+                {(deployment.errorMessage || deployment.error_message) && (
                   <div className="mt-4 p-4 bg-red-50 border border-red-100 rounded-lg">
                     <p className="text-sm text-red-700">
-                      <strong>Error:</strong> {deployment.errorMessage}
+                      <strong>Error:</strong> {deployment.errorMessage || deployment.error_message}
                     </p>
                   </div>
                 )}
 
-                {(deployment.paymentSignature || deployment.transactionSignature) && (
+                {(deployment.paymentSignature || deployment.payment_signature || deployment.transactionSignature || deployment.transaction_signature || deployment.on_chain_deploy_tx || deployment.on_chain_confirm_tx) && (
                   <div className="mt-4 flex flex-wrap gap-3 pt-4 border-t border-gray-200">
-                    {deployment.paymentSignature && (
+                    {(deployment.paymentSignature || deployment.payment_signature) && (
                       <a
-                        href={`https://explorer.solana.com/tx/${deployment.paymentSignature}?cluster=devnet`}
+                        href={`https://explorer.solana.com/tx/${deployment.paymentSignature || deployment.payment_signature}?cluster=mainnet`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center space-x-2 text-sm text-[#0066FF] hover:text-[#0052CC] font-medium"
@@ -317,14 +318,40 @@ export default function DeploymentHistory({
                         </svg>
                       </a>
                     )}
-                    {deployment.transactionSignature && (
+                    {deployment.on_chain_deploy_tx && (
                       <a
-                        href={`https://explorer.solana.com/tx/${deployment.transactionSignature}?cluster=devnet`}
+                        href={`https://explorer.solana.com/tx/${deployment.on_chain_deploy_tx}?cluster=mainnet`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center space-x-2 text-sm text-[#0066FF] hover:text-[#0052CC] font-medium"
                       >
-                        <span>🚀 Deployment TX</span>
+                        <span>📝 Deploy Request TX</span>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                        </svg>
+                      </a>
+                    )}
+                    {(deployment.transactionSignature || deployment.transaction_signature) && (
+                      <a
+                        href={`https://explorer.solana.com/tx/${deployment.transactionSignature || deployment.transaction_signature}?cluster=mainnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center space-x-2 text-sm text-[#0066FF] hover:text-[#0052CC] font-medium"
+                      >
+                        <span>🚀 Deploy TX</span>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                        </svg>
+                      </a>
+                    )}
+                    {deployment.on_chain_confirm_tx && (
+                      <a
+                        href={`https://explorer.solana.com/tx/${deployment.on_chain_confirm_tx}?cluster=mainnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center space-x-2 text-[#0066FF] hover:text-[#0052CC] font-medium"
+                      >
+                        <span>✅ Confirm TX</span>
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                         </svg>

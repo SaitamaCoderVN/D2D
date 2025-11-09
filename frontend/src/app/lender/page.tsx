@@ -1,27 +1,27 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@/components/WalletButton';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import Image from 'next/image';
+import {
+  createStakeSolInstruction,
+  prepareTransaction,
+} from '@/lib/d2dProgram';
 
 export default function LenderPage() {
-  const { publicKey, connected, sendTransaction } = useWallet();
+  const wallet = useWallet();
+  const { publicKey, connected, sendTransaction } = wallet;
   const { connection } = useConnection();
-  const router = useRouter();
   
   const [stakeAmount, setStakeAmount] = useState('');
   const [isStaking, setIsStaking] = useState(false);
   const [userStake, setUserStake] = useState(0);
   const [totalStaked, setTotalStaked] = useState(1250.75); // Mock data
   const [estimatedAPY, setEstimatedAPY] = useState(15.2);
-
-  // Mock treasury wallet (replace with your actual treasury)
-  const TREASURY_WALLET = new PublicKey('ESsCLAUkzkjPAKnXu2kRyrGSpUgJzNKjq19PTBycqHvg');
 
   const handleStake = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,28 +45,17 @@ export default function LenderPage() {
     setIsStaking(true);
 
     try {
-      toast.loading('Creating stake transaction...', { id: 'stake' });
+      toast.loading('Preparing stake transaction...', { id: 'stake' });
 
-      const lamports = amount * LAMPORTS_PER_SOL;
+      const amountLamports = Math.floor(amount * LAMPORTS_PER_SOL);
 
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: TREASURY_WALLET,
-          lamports,
-        })
-      );
+      const instruction = createStakeSolInstruction(amountLamports, 0, publicKey);
+      const transaction = await prepareTransaction(connection, publicKey, instruction);
 
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = publicKey;
-
-      toast.loading('Please approve transaction...', { id: 'stake' });
-
+      toast.loading('Please approve stake transaction...', { id: 'stake' });
       const signature = await sendTransaction(transaction, connection);
 
       toast.loading('Confirming transaction...', { id: 'stake' });
-
       await connection.confirmTransaction(signature, 'confirmed');
 
       toast.success(`✅ Successfully staked ${amount} SOL!`, { id: 'stake', duration: 5000 });

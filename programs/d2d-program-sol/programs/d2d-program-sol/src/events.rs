@@ -41,6 +41,27 @@ pub struct DeployRequested {
 }
 
 #[event]
+pub struct DeploymentFundsRequested {
+    pub request_id: [u8; 32],
+    pub developer: Pubkey,
+    pub program_hash: [u8; 32],
+    pub service_fee: u64,
+    pub monthly_fee: u64,
+    pub initial_months: u32,
+    pub deployment_cost: u64,
+    pub total_payment: u64,
+    pub requested_at: i64,
+}
+
+#[event]
+pub struct TemporaryWalletFunded {
+    pub request_id: [u8; 32],
+    pub temporary_wallet: Pubkey,
+    pub amount: u64,
+    pub funded_at: i64,
+}
+
+#[event]
 pub struct ProgramDeployed {
     pub request_id: [u8; 32],
     pub developer: Pubkey,
@@ -60,6 +81,7 @@ pub struct DeploymentConfirmed {
     pub developer: Pubkey,
     pub deployed_program_id: Pubkey,
     pub deployment_cost: u64,
+    pub recovered_funds: u64,
     pub confirmed_at: i64,
 }
 
@@ -107,4 +129,13 @@ pub struct ProgramsSuspended {
 pub struct EmergencyPauseToggled {
     pub paused: bool,
     pub toggled_at: i64,
+}
+
+#[event]
+pub struct ProgramClosed {
+    pub request_id: [u8; 32],
+    pub program_id: Pubkey,
+    pub developer: Pubkey,
+    pub recovered_lamports: u64,
+    pub closed_at: i64,
 }

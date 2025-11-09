@@ -8,6 +8,7 @@ pub enum DeployRequestStatus {
     Suspended,           // Suspended due to non-payment
     Failed,              // Deployment failed
     Cancelled,           // Cancelled by developer
+    Closed,              // Program closed, lamports recovered
 }
 
 #[account]

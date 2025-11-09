@@ -26,7 +26,7 @@ The project consists of three main components:
    - NestJS REST API
    - Manages deployment orchestration
    - Interfaces with Solana CLI for program dumping and deployment
-   - MongoDB for deployment tracking
+   - Supabase (PostgreSQL) for deployment tracking and analytics
 
 3. **Frontend** (`frontend/`)
    - Next.js 14 with TypeScript
@@ -36,11 +36,11 @@ The project consists of three main components:
 
 ## 📋 Prerequisites
 
-- Node.js 18+ and yarn/npm
+- Node.js 18+ and pnpm/yarn/npm
 - Rust and Cargo (for Solana program)
 - Anchor CLI 0.29.0+
 - Solana CLI 1.18+
-- MongoDB 6.0+
+- Supabase account (or PostgreSQL 14+)
 - Git
 
 ## 🚀 Quick Start
@@ -76,9 +76,8 @@ anchor deploy --provider.cluster devnet
 cd ../../backend
 
 # Install dependencies
-npm install
-# or
-yarn install
+pnpm install
+# or npm install / yarn install
 
 # Copy environment variables
 cp .env.example .env
@@ -86,40 +85,52 @@ cp .env.example .env
 # Edit .env with your configuration
 nano .env
 
-# Start MongoDB (if not running)
-# mongod --dbpath /path/to/data
+# Run database migrations (Supabase)
+# Go to your Supabase project and run the migration in supabase/migrations/001_initial_schema.sql
 
 # Run in development mode
-npm run start:dev
+pnpm start:dev
+# or npm run start:dev
 ```
 
 #### Backend Environment Variables
 
+Create a `.env` file in the `backend/` directory with the following variables:
+
 ```env
-# Server
+# Server Configuration
 PORT=3001
 NODE_ENV=development
+CORS_ORIGIN=http://localhost:3000
 
-# Database
-MONGODB_URI=mongodb://localhost:27017/d2d
+# Supabase Database
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-role-key-here
 
-# Solana
+# Encryption (for storing deployer private keys)
+ENCRYPTION_KEY=your-32-character-encryption-key-here
+
+# Solana Configuration
 SOLANA_DEVNET_RPC=https://api.devnet.solana.com
 SOLANA_MAINNET_RPC=https://api.mainnet-beta.solana.com
-SOLANA_CLI_PATH=/usr/local/bin/solana
+SOLANA_CLI_PATH=solana
 
-# Deployment
-DEPLOYMENT_FEE_LAMPORTS=5000000000
+# D2D Program Configuration
+D2D_PROGRAM_ID=Hn6enqRbfjQywqVbkNNFe6rauWjQLvea8Fyh6fZZPpA8
+ADMIN_WALLET_PATH=./keys/admin-keypair.json
+TREASURY_WALLET_ADDRESS=YOUR_TREASURY_WALLET_PUBLIC_KEY
+
+# Fee Configuration
+SERVICE_FEE_PERCENTAGE=0.5
 MONTHLY_FEE_LAMPORTS=1000000000
-DEPLOYMENT_COST_LAMPORTS=10000000000
-
-# Admin
-ADMIN_WALLET_PATH=/path/to/admin-keypair.json
-TREASURY_WALLET_ADDRESS=YOUR_TREASURY_WALLET_ADDRESS
-
-# CORS
-CORS_ORIGIN=http://localhost:3000
 ```
+
+**Important Notes:**
+- `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` can be found in your Supabase project settings
+- `ENCRYPTION_KEY` should be a secure 32-character random string (use `openssl rand -hex 16`)
+- `ADMIN_WALLET_PATH` should point to a keypair with authority to call admin functions on the D2D program
+- `TREASURY_WALLET_ADDRESS` is where deployment fees are sent
+- Generate admin keypair: `solana-keygen new -o ./keys/admin-keypair.json`
 
 ### 4. Setup Frontend
 
@@ -156,32 +167,42 @@ NEXT_PUBLIC_SOLANA_NETWORK=mainnet-beta
 
 ## 📖 How It Works
 
-### Deployment Flow
+### 3-Phase Deployment Flow
 
-1. **User Initiates Deployment**
-   - User connects Solana wallet
-   - Enters devnet program ID
-   - Submits deployment request
+The deployment process follows a secure 3-phase architecture:
 
-2. **Backend Processing**
-   - Validates program exists on devnet
-   - Generates new deployer keypair
-   - Creates deployment record in database
+#### **Phase 1: Verify Program** 🔍
+1. User connects Solana wallet (Phantom, Solflare, etc.)
+2. User enters devnet program ID
+3. Backend verifies program exists on devnet
+4. Validates program is executable
 
-3. **Program Dumping**
-   - Uses `solana program dump` to download program from devnet
-   - Saves .so file temporarily
+#### **Phase 2: Calculate Costs** 💰
+1. Backend dumps program from devnet to analyze size
+2. Calculates:
+   - Rent exemption cost (based on program size)
+   - Service fee (0.5% of rent cost)
+   - Monthly subscription fee
+   - Total payment required
+3. Returns cost breakdown to frontend
 
-4. **Wallet Funding**
-   - Admin treasury funds deployer wallet with deployment cost
+#### **Phase 3: Execute Deployment** 🚀
+1. **Payment**: User sends SOL payment to treasury wallet
+2. **Verification**: Backend verifies payment transaction on-chain
+3. **On-Chain Request**: Calls `deploy_program` instruction on D2D program
+4. **Background Process**:
+   - Dumps program from devnet
+   - Deploys to mainnet using ephemeral keypair
+   - Transfers program authority to D2D program
+   - Confirms deployment success on-chain
+5. **Completion**: User receives mainnet program ID and transaction links
 
-5. **Mainnet Deployment**
-   - Uses `solana program deploy` to deploy to mainnet
-   - Records program ID and transaction signature
+### Architecture Benefits
 
-6. **Completion**
-   - Updates deployment status
-   - User can view mainnet program ID and transaction
+- **Secure**: Ephemeral wallets for each deployment
+- **Transparent**: All costs calculated upfront
+- **Verifiable**: Every step recorded on-chain
+- **Automated**: Background processing with real-time status updates
 
 ### Treasury & Staking System
 
@@ -230,9 +251,16 @@ Once the backend is running, visit http://localhost:3001/api/docs for interactiv
 
 ### Key Endpoints
 
-- `POST /api/deployments` - Create a new deployment
-- `GET /api/deployments` - Get deployments (query by user)
-- `GET /api/deployments/:id` - Get deployment by ID
+**Configuration**
+- `GET /api/config/treasury` - Get treasury wallet and program configuration
+- `GET /api/config/health` - Health check
+
+**Deployment (3-Phase Flow)**
+- `POST /api/deployments/verify` - Phase 1: Verify program on devnet
+- `POST /api/deployments/calculate-cost` - Phase 2: Calculate deployment costs
+- `POST /api/deployments/execute` - Phase 3: Execute deployment
+- `GET /api/deployments/:id` - Get deployment details by ID
+- `GET /api/deployments?userWalletAddress=<wallet>` - Get user's deployments
 
 ## 🎨 Frontend Features
 
@@ -298,27 +326,65 @@ anchor build --verifiable
 anchor deploy --provider.cluster mainnet
 ```
 
-## 📊 Database Schema
+## 📊 Database Schema (Supabase/PostgreSQL)
 
-### Deployment Collection
+### Deployments Table
 
-```typescript
-{
-  userWalletAddress: string;
-  devnetProgramId: string;
-  mainnetProgramId?: string;
-  deployerWalletAddress: string;
-  deployerWalletPrivateKey: string; // Encrypted in production
-  status: 'pending' | 'dumping' | 'deploying' | 'success' | 'failed';
-  transactionSignature?: string;
-  errorMessage?: string;
-  programFilePath?: string;
-  serviceFee: number;
-  deploymentCost: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
+```sql
+CREATE TABLE deployments (
+  id UUID PRIMARY KEY,
+  user_wallet_address TEXT NOT NULL,
+  devnet_program_id TEXT NOT NULL,
+  mainnet_program_id TEXT,
+  deployer_wallet_address TEXT NOT NULL,
+  deployer_wallet_private_key TEXT NOT NULL, -- AES encrypted
+  status TEXT NOT NULL, -- 'pending', 'dumping', 'deploying', 'success', 'failed'
+  transaction_signature TEXT,
+  payment_signature TEXT,
+  on_chain_deploy_tx TEXT, -- deploy_program instruction tx
+  on_chain_confirm_tx TEXT, -- confirm_deployment tx
+  error_message TEXT,
+  program_file_path TEXT,
+  program_hash TEXT, -- SHA256 for PDA seed
+  service_fee BIGINT NOT NULL,
+  deployment_cost BIGINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
+
+### Deployment Logs Table
+
+```sql
+CREATE TABLE deployment_logs (
+  id UUID PRIMARY KEY,
+  deployment_id UUID REFERENCES deployments(id),
+  phase TEXT NOT NULL, -- 'verify', 'calculate', 'execute', 'deploy', 'confirm'
+  log_level TEXT NOT NULL, -- 'info', 'warn', 'error', 'debug'
+  message TEXT NOT NULL,
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### User Stats Table
+
+```sql
+CREATE TABLE user_stats (
+  id UUID PRIMARY KEY,
+  wallet_address TEXT UNIQUE NOT NULL,
+  total_deployments INTEGER DEFAULT 0,
+  successful_deployments INTEGER DEFAULT 0,
+  failed_deployments INTEGER DEFAULT 0,
+  total_fees_paid BIGINT DEFAULT 0,
+  first_deployment_at TIMESTAMPTZ,
+  last_deployment_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Run the migration script in `backend/supabase/migrations/001_initial_schema.sql` in your Supabase SQL editor.
 
 ## 🛠️ Development
 

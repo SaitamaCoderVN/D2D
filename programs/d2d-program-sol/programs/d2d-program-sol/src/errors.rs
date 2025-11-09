@@ -34,8 +34,12 @@ pub enum ErrorCode {
     InvalidRequestId,
     #[msg("Invalid request status")]
     InvalidRequestStatus,
+    #[msg("Invalid deployment status")]
+    InvalidDeploymentStatus,
     #[msg("Invalid treasury wallet")]
     InvalidTreasuryWallet,
+    #[msg("Invalid ephemeral key")]
+    InvalidEphemeralKey,
     #[msg("Calculation overflow")]
     CalculationOverflow,
     #[msg("Time elapsed too large")]

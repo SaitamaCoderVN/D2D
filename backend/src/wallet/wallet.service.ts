@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Keypair } from '@solana/web3.js';
 import * as bs58 from 'bs58';
+import * as fs from 'fs';
 
 @Injectable()
 export class WalletService {
@@ -8,6 +9,7 @@ export class WalletService {
 
   /**
    * Generate a new random keypair for deployment
+   * Returns base58 encoded private key (for backward compatibility)
    */
   generateKeypair(): { publicKey: string; privateKey: string } {
     const keypair = Keypair.generate();
@@ -18,6 +20,15 @@ export class WalletService {
       publicKey: keypair.publicKey.toString(),
       privateKey: bs58.encode(keypair.secretKey),
     };
+  }
+
+  /**
+   * Generate a Keypair object (returns the actual Keypair)
+   */
+  generateKeypairObject(): Keypair {
+    const keypair = Keypair.generate();
+    this.logger.log(`Generated new keypair object: ${keypair.publicKey.toString()}`);
+    return keypair;
   }
 
   /**

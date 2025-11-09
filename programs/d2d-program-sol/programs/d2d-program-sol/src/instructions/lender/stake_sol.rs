@@ -1,12 +1,16 @@
 use crate::errors::ErrorCode;
 use crate::events::SolStaked;
-use crate::states::{LenderStake, TreasuryPool};
+use crate::states::{BackerDeposit, TreasuryPool};
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
+/// Stake SOL into treasury pool
+/// Also referred to as "create deposit" in the new backer-focused terminology
+/// SOL is transferred directly to Treasury Pool PDA (program-owned account)
 #[derive(Accounts)]
 pub struct StakeSol<'info> {
     #[account(
+        mut,
         seeds = [TreasuryPool::PREFIX_SEED],
         bump = treasury_pool.bump
     )]
@@ -14,22 +18,18 @@ pub struct StakeSol<'info> {
     #[account(
         init_if_needed,
         payer = lender,
-        space = 8 + LenderStake::INIT_SPACE,
-        seeds = [LenderStake::PREFIX_SEED, lender.key().as_ref()],
+        space = 8 + BackerDeposit::INIT_SPACE,
+        seeds = [BackerDeposit::PREFIX_SEED, lender.key().as_ref()],
         bump
     )]
-    pub lender_stake: Account<'info, LenderStake>,
+    pub lender_stake: Account<'info, BackerDeposit>,
     #[account(mut)]
     pub lender: Signer<'info>,
-    /// CHECK: Treasury wallet address - validated against treasury_pool
-    #[account(
-        mut,
-        constraint = treasury_wallet.key() == treasury_pool.treasury_wallet @ ErrorCode::InvalidTreasuryWallet
-    )]
-    pub treasury_wallet: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
+/// Stake SOL into treasury pool (create deposit)
+/// Returns a deposit receipt tracked in BackerDeposit account
 pub fn stake_sol(ctx: Context<StakeSol>, amount: u64, lock_period: i64) -> Result<()> {
     let treasury_pool = &mut ctx.accounts.treasury_pool;
     let lender_stake = &mut ctx.accounts.lender_stake;
@@ -39,21 +39,22 @@ pub fn stake_sol(ctx: Context<StakeSol>, amount: u64, lock_period: i64) -> Resul
     require!(amount > 0, ErrorCode::InvalidAmount);
     require!(lock_period >= 0, ErrorCode::InvalidLockPeriod);
 
-    // Initialize lender stake if first time
-    if lender_stake.lender == Pubkey::default() {
-        lender_stake.lender = ctx.accounts.lender.key();
-        lender_stake.staked_amount = 0;
+    // Initialize backer deposit if first time
+    if lender_stake.backer == Pubkey::default() {
+        lender_stake.backer = ctx.accounts.lender.key();
+        lender_stake.deposited_amount = 0;
         lender_stake.reward_debt = 0;
         lender_stake.last_claim_time = current_time;
         lender_stake.total_claimed = 0;
-        lender_stake.stake_time = current_time;
+        lender_stake.deposit_time = current_time;
         lender_stake.lock_period = lock_period;
         lender_stake.is_active = true;
+        lender_stake.deployments_supported = 0;
         lender_stake.bump = ctx.bumps.lender_stake;
     } else {
         require!(lender_stake.is_active, ErrorCode::InactiveStake);
 
-        // Claim existing rewards before adding new stake
+        // Claim existing rewards before adding new deposit
         let rewards = lender_stake.calculate_rewards(treasury_pool)?;
         if rewards > 0 {
             lender_stake.reward_debt += rewards;
@@ -61,28 +62,28 @@ pub fn stake_sol(ctx: Context<StakeSol>, amount: u64, lock_period: i64) -> Resul
         }
     }
 
-    // Update stake amount
-    lender_stake.staked_amount += amount;
-    lender_stake.stake_time = current_time;
+    // Update deposit amount
+    lender_stake.deposited_amount += amount;
+    lender_stake.deposit_time = current_time; // Reset deposit time for duration calculation
     lender_stake.lock_period = lock_period;
 
     // Update treasury pool
     treasury_pool.total_staked += amount;
 
-    // Transfer SOL to treasury
+    // Transfer SOL directly to Treasury Pool PDA (program-owned account)
     let cpi_context = CpiContext::new(
         ctx.accounts.system_program.to_account_info(),
         system_program::Transfer {
             from: ctx.accounts.lender.to_account_info(),
-            to: ctx.accounts.treasury_wallet.to_account_info(),
+            to: ctx.accounts.treasury_pool.to_account_info(),
         },
     );
     system_program::transfer(cpi_context, amount)?;
 
     emit!(SolStaked {
-        lender: lender_stake.lender,
+        lender: lender_stake.backer,
         amount,
-        total_staked: lender_stake.staked_amount,
+        total_staked: lender_stake.deposited_amount,
         lock_period,
     });
 

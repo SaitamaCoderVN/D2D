@@ -2,11 +2,11 @@ use crate::errors::ErrorCode;
 use crate::events::{DeploymentConfirmed, DeploymentFailed};
 use crate::states::{DeployRequest, DeployRequestStatus, TreasuryPool};
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
 
 #[derive(Accounts)]
 pub struct ConfirmDeployment<'info> {
     #[account(
+        mut,
         seeds = [TreasuryPool::PREFIX_SEED],
         bump = treasury_pool.bump
     )]
@@ -22,12 +22,9 @@ pub struct ConfirmDeployment<'info> {
         constraint = admin.key() == treasury_pool.admin @ ErrorCode::Unauthorized
     )]
     pub admin: Signer<'info>,
-    /// CHECK: Treasury wallet address - validated against treasury_pool
-    #[account(
-        mut,
-        constraint = treasury_wallet.key() == treasury_pool.treasury_wallet @ ErrorCode::InvalidTreasuryWallet
-    )]
-    pub treasury_wallet: UncheckedAccount<'info>,
+    /// CHECK: Ephemeral key that received deployment funds
+    #[account(mut)]
+    pub ephemeral_key: UncheckedAccount<'info>,
     /// CHECK: Developer wallet for refund if deployment fails
     #[account(mut)]
     pub developer_wallet: UncheckedAccount<'info>,
@@ -38,7 +35,12 @@ pub fn confirm_deployment_success(
     ctx: Context<ConfirmDeployment>,
     request_id: [u8; 32],
     deployed_program_id: Pubkey,
+    recovered_funds: u64,
 ) -> Result<()> {
+    // Get account infos before mutable borrows
+    let treasury_pool_info = ctx.accounts.treasury_pool.to_account_info();
+    let _treasury_pool_bump = ctx.accounts.treasury_pool.bump;
+    
     let treasury_pool = &mut ctx.accounts.treasury_pool;
     let deploy_request = &mut ctx.accounts.deploy_request;
 
@@ -52,15 +54,31 @@ pub fn confirm_deployment_success(
         ErrorCode::InvalidRequestStatus
     );
 
+    // Verify ephemeral_key matches the one in deploy_request
+    if let Some(expected_ephemeral) = deploy_request.ephemeral_key {
+        require!(
+            ctx.accounts.ephemeral_key.key() == expected_ephemeral,
+            ErrorCode::InvalidEphemeralKey
+        );
+    }
+
     // Update deploy request
     deploy_request.status = DeployRequestStatus::Active;
     deploy_request.deployed_program_id = Some(deployed_program_id);
+
+    if recovered_funds > 0 {
+        treasury_pool.total_staked = treasury_pool
+            .total_staked
+            .checked_add(recovered_funds)
+            .ok_or(ErrorCode::CalculationOverflow)?;
+    }
 
     emit!(DeploymentConfirmed {
         request_id: deploy_request.request_id,
         developer: deploy_request.developer,
         deployed_program_id,
         deployment_cost: deploy_request.deployment_cost,
+        recovered_funds,
         confirmed_at: Clock::get()?.unix_timestamp,
     });
 
@@ -72,6 +90,10 @@ pub fn confirm_deployment_failure(
     request_id: [u8; 32],
     failure_reason: String,
 ) -> Result<()> {
+    // Get account infos before mutable borrows
+    let treasury_pool_info = ctx.accounts.treasury_pool.to_account_info();
+    let _treasury_pool_bump = ctx.accounts.treasury_pool.bump;
+    
     let treasury_pool = &mut ctx.accounts.treasury_pool;
     let deploy_request = &mut ctx.accounts.deploy_request;
 
@@ -92,19 +114,28 @@ pub fn confirm_deployment_failure(
     // Update deploy request
     deploy_request.status = DeployRequestStatus::Failed;
 
-    // Refund developer payment
-    let refund_cpi = CpiContext::new(
-        ctx.accounts.system_program.to_account_info(),
-        system_program::Transfer {
-            from: ctx.accounts.treasury_wallet.to_account_info(),
-            to: ctx.accounts.developer_wallet.to_account_info(),
-        },
-    );
-    system_program::transfer(refund_cpi, refund_amount)?;
+    // Refund developer payment from Treasury Pool PDA via direct lamport manipulation
+    {
+        let developer_wallet_info = ctx.accounts.developer_wallet.to_account_info();
+        let mut treasury_lamports = treasury_pool_info.try_borrow_mut_lamports()?;
+        let mut developer_lamports = developer_wallet_info.try_borrow_mut_lamports()?;
 
+        require!(**treasury_lamports >= refund_amount, ErrorCode::InsufficientTreasuryFunds);
+
+        **treasury_lamports = (**treasury_lamports)
+            .checked_sub(refund_amount)
+            .ok_or(ErrorCode::CalculationOverflow)?;
+        **developer_lamports = (**developer_lamports)
+            .checked_add(refund_amount)
+            .ok_or(ErrorCode::CalculationOverflow)?;
+    }
+ 
     // Return deployment cost to treasury
     // Note: We need to add deployment_cost back to treasury
-    treasury_pool.total_staked += deploy_request.deployment_cost;
+    treasury_pool.total_staked = treasury_pool
+        .total_staked
+        .checked_add(deploy_request.deployment_cost)
+        .ok_or(ErrorCode::CalculationOverflow)?;
 
     emit!(DeploymentFailed {
         request_id: deploy_request.request_id,

@@ -7,6 +7,7 @@ use anchor_lang::system_program;
 #[derive(Accounts)]
 pub struct ClaimRewards<'info> {
     #[account(
+        mut,
         seeds = [TreasuryPool::PREFIX_SEED],
         bump = treasury_pool.bump
     )]
@@ -19,12 +20,6 @@ pub struct ClaimRewards<'info> {
     pub lender_stake: Account<'info, LenderStake>,
     #[account(mut)]
     pub lender: Signer<'info>,
-    /// CHECK: Treasury wallet address - validated against treasury_pool
-    #[account(
-        mut,
-        constraint = treasury_wallet.key() == treasury_pool.treasury_wallet @ ErrorCode::InvalidTreasuryWallet
-    )]
-    pub treasury_wallet: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -52,18 +47,25 @@ pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
     // Update treasury pool
     treasury_pool.total_rewards_distributed += rewards;
 
-    // Transfer rewards to lender
-    let cpi_context = CpiContext::new(
+    // Transfer rewards to lender from Treasury Pool PDA
+    let treasury_pool_seeds = &[
+        TreasuryPool::PREFIX_SEED,
+        &[ctx.accounts.treasury_pool.bump],
+    ];
+    let signer_seeds = &[&treasury_pool_seeds[..]];
+    
+    let cpi_context = CpiContext::new_with_signer(
         ctx.accounts.system_program.to_account_info(),
         system_program::Transfer {
-            from: ctx.accounts.treasury_wallet.to_account_info(),
+            from: ctx.accounts.treasury_pool.to_account_info(),
             to: ctx.accounts.lender.to_account_info(),
         },
+        signer_seeds,
     );
     system_program::transfer(cpi_context, rewards)?;
 
     emit!(RewardsClaimed {
-        lender: lender_stake.lender,
+        lender: lender_stake.backer,
         amount: rewards,
         total_claimed: lender_stake.total_claimed,
     });

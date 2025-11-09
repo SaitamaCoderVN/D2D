@@ -5,7 +5,7 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@/components/WalletButton';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import Image from 'next/image';
 import {
   getBackerData,
@@ -14,9 +14,15 @@ import {
   calculateAPY,
   claimRewards,
 } from '@/lib/backerStorage';
+import {
+  createClaimRewardsInstruction,
+  createStakeSolInstruction,
+  prepareTransaction,
+} from '@/lib/d2dProgram';
 
 export default function BackerPage() {
-  const { publicKey, connected, sendTransaction } = useWallet();
+  const wallet = useWallet();
+  const { publicKey, connected, sendTransaction } = wallet;
   const { connection } = useConnection();
   
   const [stakeAmount, setStakeAmount] = useState('');
@@ -95,8 +101,6 @@ export default function BackerPage() {
     SOL_PRICE
   );
 
-  const TREASURY_WALLET = new PublicKey('ESsCLAUkzkjPAKnXu2kRyrGSpUgJzNKjq19PTBycqHvg');
-
   const handleStake = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!publicKey || !connected) {
@@ -118,23 +122,16 @@ export default function BackerPage() {
     setIsStaking(true);
 
     try {
-      toast.loading('Creating stake transaction...', { id: 'stake' });
-      const lamports = amount * LAMPORTS_PER_SOL;
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: TREASURY_WALLET,
-          lamports,
-        })
-      );
+      toast.loading('Preparing stake transaction...', { id: 'stake' });
 
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = publicKey;
+      const amountLamports = Math.floor(amount * LAMPORTS_PER_SOL);
 
-      toast.loading('Please approve transaction...', { id: 'stake' });
+      const instruction = createStakeSolInstruction(amountLamports, 0, publicKey);
+      const transaction = await prepareTransaction(connection, publicKey, instruction);
+
+      toast.loading('Please approve stake transaction...', { id: 'stake' });
       const signature = await sendTransaction(transaction, connection);
-      
+
       toast.loading('Confirming transaction...', { id: 'stake' });
       await connection.confirmTransaction(signature, 'confirmed');
 
@@ -211,35 +208,22 @@ export default function BackerPage() {
     setIsClaiming(true);
 
     try {
-      toast.loading('Creating claim transaction...', { id: 'claim' });
-      
-      // Create transaction to send rewards from treasury to user
-      const lamports = Math.floor(userRewards * LAMPORTS_PER_SOL);
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: TREASURY_WALLET,
-          toPubkey: publicKey,
-          lamports,
-        })
-      );
+      toast.loading('Preparing claim transaction...', { id: 'claim' });
 
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = publicKey;
+      const instruction = createClaimRewardsInstruction(publicKey);
+      const transaction = await prepareTransaction(connection, publicKey, instruction);
 
-      toast.loading('Please approve transaction...', { id: 'claim' });
+      toast.loading('Please approve claim transaction...', { id: 'claim' });
       const signature = await sendTransaction(transaction, connection);
-      
+
       toast.loading('Confirming transaction...', { id: 'claim' });
       await connection.confirmTransaction(signature, 'confirmed');
 
       const claimedAmount = userRewards;
-      
-      // Update localStorage - reset rewards
-      if (publicKey) {
-        claimRewards(publicKey.toString());
-        setUserRewards(0);
-      }
+
+      // Update local storage & state
+      claimRewards(publicKey.toString());
+      setUserRewards(0);
 
       toast.success(`✅ Claimed ${claimedAmount.toFixed(4)} SOL!`, { id: 'claim', duration: 5000 });
 
